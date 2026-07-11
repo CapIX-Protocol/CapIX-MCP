@@ -1,0 +1,32 @@
+{
+  "name": "capix-mcp-server",
+  "version": "1.0.0",
+  "description": "Capix MCP Server — deploy and manage private LLM instances on the Capix GPU network from any AI coding agent.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CapIX-Protocol/CapIX-MCP.git"
+  },
+  "homepage": "https://capix.network",
+  "keywords": ["mcp", "capix", "llm", "gpu", "ai", "inference", "model-context-protocol"]
+}
