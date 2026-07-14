@@ -1,510 +1,478 @@
 #!/usr/bin/env node
 /**
- * Capix MCP Server — deploy and manage private LLM instances on the Capix
- * GPU network from any AI coding agent that supports MCP.
+ * Capix MCP Server — CLI entry point.
  *
- * Tools:
- *   capix_list_models        — browse the model catalog (featured + uncensored + community)
- *   capix_list_offers        — find live GPU offers that fit a model
- *   capix_deploy_llm         — deploy a model on a GPU, get an OpenAI endpoint back
- *   capix_deploy_custom      — deploy any Hugging Face model (auto-detect specs)
- *   capix_deploy_and_wait    — deploy + poll until ready, return the endpoint + key
- *   capix_list_deploys       — list your active/destroyed LLM deploys
- *   capix_get_endpoint       — get the live endpoint URL + API key for a deploy
- *   capix_destroy_llm        — destroy a deploy and stop billing
- *   capix_get_balance        — check wallet balance + active billing
- *   capix_list_hosted        — list always-on Capix-hosted endpoints (ready now)
- *   capix_reveal_hosted_key  — get the API key for a hosted endpoint
- *
- * Transport: stdio (for local agent integration) or HTTP (for remote).
+ * Commands:
+ *   capix-mcp                     Start the MCP server on stdio (default).
+ *   capix-mcp server              Start on stdio; use --http <port> for HTTP.
+ *   capix-mcp doctor              Diagnose auth, base URL, and tool inventory.
+ *   capix-mcp login               Authenticate via OAuth (PKCE browser flow).
+ *   capix-mcp logout              Revoke tokens and clear stored credentials.
+ *   capix-mcp --version           Print version and exit.
  *
  * Config via env:
- *   CAPIX_BASE_URL  — Capix network URL (default: https://capix.network)
- *   CAPIX_API_KEY   — Session token (cpx_session.… or cpk_… API key)
+ *   CAPIX_BASE_URL          Capix network URL (default: https://capix.network)
+ *   CAPIX_API_KEY           Session token / API key (fallback when no OAuth)
+ *   CAPIX_PROJECT_ID        Default project id for unscoped reads
+ *   CAPIX_OAUTH_CLIENT_ID   OAuth client id (default: capix-mcp)
+ *   CAPIX_MCP_HTTP_PORT     Port for the streamable HTTP transport
+ *   CAPIX_MCP_HTTP_TOKEN    Bearer service token guarding the HTTP transport
+ *
+ * Auth strategy: the shared @capix/auth-broker is used for OAuth when it is
+ * importable AND a stored refresh token exists; otherwise the server falls
+ * back to the CAPIX_API_KEY env var. Run `capix-mcp login` to populate the
+ * broker's credential store.
  *
  * License: Apache-2.0
  * Repo: https://github.com/CapIX-Protocol/CapIX-MCP
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import * as capix from "./capixClient.js";
+import { createClient, tryCreateBrokerAuthProvider } from "./client.js";
+import {
+  DEFAULT_CAPIX_BASE_URL,
+  DEFAULT_OAUTH_CLIENT_ID,
+  DEFAULT_OAUTH_SCOPE,
+} from "./types.js";
+import {
+  createCapixMcpServer,
+  startStdioServer,
+  startHttpServer,
+  getToolSummary,
+} from "./server.js";
+import { TOOL_COUNT, TOOL_NAMES } from "./tools.js";
+import { CAPIX_RESOURCES } from "./resources.js";
+import { CAPIX_PROMPTS } from "./prompts.js";
 
-const server = new McpServer({
-  name: "capix-mcp-server",
-  version: "1.0.0",
-});
+const VERSION = "2.1.0";
 
-// ── Tool: List models ──────────────────────────────────────────────────────
+// ===========================================================================
+// Argument parsing
+// ===========================================================================
 
-server.registerTool(
-  "capix_list_models",
-  {
-    title: "List Capix LLM Models",
-    description: `Browse the Capix LLM model catalog. Returns all deployable models including:
-- Featured partner models (SuperGemma, Jiunsong uncensored)
-- Community models (Qwen, Llama, Mistral, DeepSeek)
-- Custom deploy option
+interface CliArgs {
+  command: string;
+  httpPort?: number;
+  httpToken?: string;
+  help: boolean;
+  version: boolean;
+  health: boolean;
+}
 
-Each model includes: id, label, params (B), min VRAM (GB), GPU count,
-quantization, whether it's gated (needs HF token), and whether it's
-uncensored (no safety filters).
+function parseArgs(argv: string[]): CliArgs {
+  const args = argv.slice(2);
+  let command = "server";
+  let httpPort: number | undefined;
+  let httpToken: string | undefined;
+  let help = false;
+  let versionFlag = false;
+  let healthFlag = false;
 
-Use this to find the right model before calling capix_deploy_llm.`,
-    inputSchema: {
-      category: z.string().optional().describe("Filter by category: 'chat', 'coding', 'reasoning', 'vision'"),
-      uncensored_only: z.boolean().optional().describe("Show only uncensored/abliterated models (no safety filters)"),
-      featured_only: z.boolean().optional().describe("Show only featured partner models"),
-    },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set. Get your session token from capix.network." }] };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+    } else if (arg === "--version" || arg === "-v") {
+      versionFlag = true;
+    } else if (arg === "--health") {
+      healthFlag = true;
+    } else if (arg === "--http") {
+      httpPort = Number(args[++i]) || undefined;
+    } else if (arg === "--http-port") {
+      httpPort = Number(args[++i]) || undefined;
+    } else if (arg === "--token") {
+      httpToken = args[++i];
+    } else if (arg?.startsWith("--http=")) {
+      httpPort = Number(arg.slice("--http=".length)) || undefined;
+    } else if (arg?.startsWith("--token=")) {
+      httpToken = arg.slice("--token=".length);
+    } else if (arg && !arg.startsWith("-")) {
+      command = arg;
     }
-
-    const models = await capix.getCatalog();
-    let filtered = models;
-
-    if (params.category) filtered = filtered.filter((m) => m.category === params.category);
-    if (params.uncensored_only) filtered = filtered.filter((m) => m.uncensored);
-    if (params.featured_only) filtered = filtered.filter((m) => m.featured || m.partner);
-
-    const lines = filtered.map((m) =>
-      `${m.id}\t${m.label}\t${m.paramB}B\t${m.minVramGb}GB VRAM\t${m.gpuCount} GPU${m.gpuCount > 1 ? "s" : ""}\t${m.quantization === "none" ? "fp16" : m.quantization}\t${m.gated ? "gated" : "open"}\t${m.uncensored ? "uncensored" : "standard"}\t${m.tagline}`
-    );
-
-    const text = `Model ID\tLabel\tParams\tMin VRAM\tGPUs\tQuant\tAccess\tType\tTagline\n${lines.join("\n")}`;
-    const output = { count: filtered.length, models: filtered };
-
-    return {
-      content: [{ type: "text", text }],
-      structuredContent: output as unknown as Record<string, unknown>,
-    };
-  },
-);
-
-// ── Tool: List offers ───────────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_list_offers",
-  {
-    title: "List GPU Offers",
-    description: `Find live GPU offers from the Capix network that can serve a specific model.
-
-Returns offers filtered by the model's VRAM + GPU count requirements,
-sorted by price (cheapest first). Each offer includes: askId, GPU model,
-VRAM, CPU, RAM, price/hr, location, reliability.
-
-Use the askId from this list when calling capix_deploy_llm.`,
-    inputSchema: {
-      model_id: z.string().describe("Model ID from capix_list_models (e.g. 'jiunsong-supergemma4-31b-abliterated')"),
-      region: z.string().optional().describe("Region filter: 'global', 'eu', 'us', 'asia' (default: global)"),
-    },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const offers = await capix.getOffers(params.model_id, params.region);
-
-    if (offers.length === 0) {
-      return { content: [{ type: "text", text: `No live GPU offers fit model '${params.model_id}' right now. Try another region or check back shortly.` }] };
-    }
-
-    const lines = offers.map((o) =>
-      `askId: ${o.askId}\t${o.numGpus > 1 ? `${o.numGpus}× ` : ""}${o.gpu}\t${o.totalVramGb}GB VRAM\t${o.cpuCores} cores\t${o.ramGb}GB RAM\t$${o.roundedPricePerHr.toFixed(2)}/hr\t${o.location}\t${(o.reliability * 100).toFixed(1)}%`
-    );
-
-    return {
-      content: [{ type: "text", text: `Found ${offers.length} offers:\n\n${lines.join("\n")}` }],
-      structuredContent: { count: offers.length, offers } as Record<string, unknown>,
-    };
-  },
-);
-
-// ── Tool: Deploy LLM ───────────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_deploy_llm",
-  {
-    title: "Deploy LLM on GPU",
-    description: `Deploy an LLM model from the Capix catalog onto a rented GPU.
-
-Returns the instance ID, API key (cpxllm_...), and the model details.
-The endpoint won't be ready immediately — use capix_get_endpoint to poll
-until it's live (typically 2-10 minutes for model download + boot).
-
-The API key is the Bearer token for the OpenAI-compatible endpoint.
-Billing starts immediately and stops when you call capix_destroy_llm.
-
-Required: model_id (from capix_list_models) and askId (from capix_list_offers).
-For gated models (Gemma, Llama), pass an HF token (hf_... from huggingface.co/settings/tokens).`,
-    inputSchema: {
-      model_id: z.string().describe("Model ID from the catalog (e.g. 'jiunsong-supergemma4-31b-abliterated')"),
-      ask_id: z.number().int().describe("GPU offer ID from capix_list_offers"),
-      duration_hours: z.number().int().min(1).max(720).default(1).describe("How long to keep the instance (hours)"),
-      hf_token: z.string().optional().describe("Hugging Face token (hf_...) — required for gated models (Gemma, Llama)"),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const res = await capix.deployModel(params.model_id, params.ask_id, params.duration_hours, params.hf_token);
-
-    if (res.ok) {
-      return {
-        content: [{ type: "text", text: `✓ Deploying ${res.model.label} on ${res.gpu} in ${res.location}.\nInstance #${res.instanceId}\nAPI key: ${res.apiKey}\nCost: $${res.chargedUsd.toFixed(2)} for ${params.duration_hours}h\n\nThe endpoint will be ready in 2-10 min. Use capix_get_endpoint to check status.` }],
-        structuredContent: res as unknown as Record<string, unknown>,
-      };
-    }
-
-    return { content: [{ type: "text", text: `Deploy failed: ${res.error || "unknown error"}` }] };
-  },
-);
-
-// ── Tool: Deploy + wait for ready ──────────────────────────────────────────
-
-server.registerTool(
-  "capix_deploy_and_wait",
-  {
-    title: "Deploy LLM and Wait Until Ready",
-    description: `Deploy an LLM and poll until the endpoint is ready.
-
-This is a convenience tool that calls capix_deploy_llm, then polls
-capix_get_endpoint every 15 seconds until the model is serving.
-Returns the live endpoint URL + API key when ready.
-
-Use this when you want to deploy a private LLM and immediately start
-using it with zero manual polling. The tool will wait up to 20 minutes.
-
-For loop engineering: deploy with duration_hours=0 (auto-renew), use the
-endpoint, then call capix_destroy_llm when done.`,
-    inputSchema: {
-      model_id: z.string().describe("Model ID from the catalog"),
-      ask_id: z.number().int().describe("GPU offer ID from capix_list_offers"),
-      duration_hours: z.number().int().min(1).max(720).default(1).describe("Duration in hours"),
-      hf_token: z.string().optional().describe("HF token for gated models"),
-      max_wait_seconds: z.number().int().min(60).max(1200).default(600).describe("Max time to wait for ready (seconds, default 600 = 10min)"),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    // Step 1: deploy
-    const deploy = await capix.deployModel(params.model_id, params.ask_id, params.duration_hours, params.hf_token);
-
-    if (!deploy.ok) {
-      return { content: [{ type: "text", text: `Deploy failed: ${deploy.error || "unknown error"}` }] };
-    }
-
-    // Step 2: poll until ready
-    const pollInterval = 15000; // 15s
-    const maxAttempts = Math.ceil(params.max_wait_seconds / 15);
-    let lastStatus = "";
-
-    for (let i = 0; i < maxAttempts; i++) {
-      const status = await capix.getDeployStatus(deploy.instanceId);
-
-      if (status.ok && status.ready && status.baseOpenAiUrl) {
-        // Ready — get the API key
-        const keyRes = await capix.getDeployApiKey(deploy.instanceId);
-        const apiKey = keyRes.ok ? keyRes.apiKey || deploy.apiKey : deploy.apiKey;
-
-        return {
-          content: [{ type: "text", text: `✓ ${status.modelLabel} is ready!\n\nEndpoint: ${status.baseOpenAiUrl}\nAPI key: ${apiKey}\nGPU: ${status.gpu} in ${status.location}\nRate: $${status.pricePerHr.toFixed(2)}/hr\n\nUse this as your OpenAI-compatible base URL + Bearer key. Remember to call capix_destroy_llm with instance #${deploy.instanceId} when done to stop billing.` }],
-          structuredContent: {
-            instanceId: deploy.instanceId,
-            modelLabel: status.modelLabel,
-            baseUrl: status.baseOpenAiUrl,
-            apiKey,
-            gpu: status.gpu,
-            location: status.location,
-            pricePerHr: status.pricePerHr,
-          } as Record<string, unknown>,
-        };
-      }
-
-      lastStatus = status.ok ? status.state : "unknown";
-      await new Promise((r) => setTimeout(r, pollInterval));
-    }
-
-    return {
-      content: [{ type: "text", text: `Timed out waiting for instance #${deploy.instanceId} after ${params.max_wait_seconds}s. Last status: ${lastStatus}. Use capix_get_endpoint to check manually.` }],
-    };
-  },
-);
-
-// ── Tool: Get endpoint status ──────────────────────────────────────────────
-
-server.registerTool(
-  "capix_get_endpoint",
-  {
-    title: "Get LLM Endpoint Status",
-    description: `Check the status of an LLM deploy. Returns the live endpoint URL,
-ready state, and GPU info. When ready=true, the baseOpenAiUrl is
-the OpenAI-compatible base URL to use.
-
-To get the API key, use capix_deploy_llm (returned once at deploy time)
-or capix_reveal_hosted_key (for hosted endpoints).`,
-    inputSchema: {
-      instance_id: z.number().int().describe("Instance ID from capix_deploy_llm"),
-    },
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const status = await capix.getDeployStatus(params.instance_id);
-
-    if (!status.ok) {
-      return { content: [{ type: "text", text: "Failed to get status." }] };
-    }
-
-    const text = status.ready
-      ? `✓ Ready!\nEndpoint: ${status.baseOpenAiUrl}\nModel: ${status.modelLabel}\nGPU: ${status.gpu} in ${status.location}\nRate: $${status.pricePerHr.toFixed(2)}/hr`
-      : `Status: ${status.state}\nModel: ${status.modelLabel}\nGPU: ${status.gpu} in ${status.location}\nNot ready yet — model is still downloading/booting.`;
-
-    return {
-      content: [{ type: "text", text }],
-      structuredContent: status as unknown as Record<string, unknown>,
-    };
-  },
-);
-
-// ── Tool: List deploys ─────────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_list_deploys",
-  {
-    title: "List LLM Deploys",
-    description: "List all your LLM deploys (active and destroyed) with their current status.",
-    inputSchema: {},
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  async () => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const res = await capix.listDeploys();
-
-    if (!res.ok || !res.deploys?.length) {
-      return { content: [{ type: "text", text: "No LLM deploys found." }] };
-    }
-
-    const lines = res.deploys.map((d: any) => {
-      const live = d.live || {};
-      return `Instance #${live.instanceId || "?"}\t${live.modelLabel || d.instance?.tier || "Unknown"}\t${live.ready ? "ready" : live.state || "unknown"}\t${live.gpu || ""}\t${live.location || ""}`;
-    });
-
-    return {
-      content: [{ type: "text", text: `Your LLM deploys:\n\n${lines.join("\n")}` }],
-      structuredContent: res as unknown as Record<string, unknown>,
-    };
-  },
-);
-
-// ── Tool: Destroy deploy ───────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_destroy_llm",
-  {
-    title: "Destroy LLM Deploy",
-    description: `Destroy an LLM deploy and stop billing immediately.
-The endpoint and API key will stop working. The GPU instance is
-terminated and you stop paying for it.
-
-Use this when you're done with a private LLM endpoint (e.g. after
-loop engineering is complete).`,
-    inputSchema: {
-      instance_id: z.number().int().describe("Instance ID to destroy"),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const res = await capix.destroyDeploy(params.instance_id);
-
-    if (res.ok) {
-      return { content: [{ type: "text", text: `✓ Destroyed instance #${params.instance_id}. Billing stopped.` }] };
-    }
-
-    return { content: [{ type: "text", text: `Failed to destroy instance #${params.instance_id}.` }] };
-  },
-);
-
-// ── Tool: Wallet balance ───────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_get_balance",
-  {
-    title: "Get Wallet Balance",
-    description: "Check your Capix wallet balance, active billing rate, and total spent.",
-    inputSchema: {},
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  async () => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const res = await capix.getBalance();
-
-    if (!res.ok) {
-      return { content: [{ type: "text", text: "Failed to get balance." }] };
-    }
-
-    const text = `Balance: $${res.balance.usd.toFixed(2)}\n≈ SOL: ${res.balance.sol.toFixed(4)}\n≈ USDC: ${res.balance.usdc.toFixed(2)}\nActive instances: ${res.activeInstances}\nTotal spent: $${res.totalSpent.toFixed(2)}`;
-
-    return {
-      content: [{ type: "text", text }],
-      structuredContent: res as unknown as Record<string, unknown>,
-    };
-  },
-);
-
-// ── Tool: Hosted endpoints ─────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_list_hosted",
-  {
-    title: "List Hosted Endpoints",
-    description: `List always-on Capix-hosted LLM endpoints that are ready to use
-right now (no deploy needed). These are shared endpoints operated by
-Capix — just grab the base URL and key and start using them.
-
-Use capix_reveal_hosted_key to get the full API key for a hosted endpoint.`,
-    inputSchema: {},
-    annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    },
-  },
-  async () => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const endpoints = await capix.getHostedEndpoints();
-
-    if (endpoints.length === 0) {
-      return { content: [{ type: "text", text: "No hosted endpoints available right now. Deploy your own with capix_deploy_llm." }] };
-    }
-
-    const lines = endpoints.map((e) =>
-      `${e.modelId}\t${e.modelLabel}\t${e.region}\t${e.isSuperGemma ? "SuperGemma" : "standard"}\t${e.baseUrl}\tkey: ${e.apiKeyMasked}`
-    );
-
-    return {
-      content: [{ type: "text", text: `Hosted endpoints ready now:\n\n${lines.join("\n")}` }],
-      structuredContent: { count: endpoints.length, endpoints } as Record<string, unknown>,
-    };
-  },
-);
-
-// ── Tool: Reveal hosted key ────────────────────────────────────────────────
-
-server.registerTool(
-  "capix_reveal_hosted_key",
-  {
-    title: "Reveal Hosted Endpoint API Key",
-    description: "Get the full API key for a Capix-hosted endpoint. Requires a minimum balance of $1.",
-    inputSchema: {
-      model_id: z.string().describe("Model ID from capix_list_hosted"),
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: false,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
-  },
-  async (params) => {
-    if (!capix.configured()) {
-      return { content: [{ type: "text", text: "Error: CAPIX_API_KEY not set." }] };
-    }
-
-    const res = await capix.revealHostedKey(params.model_id);
-
-    if (res.ok && res.apiKey) {
-      return { content: [{ type: "text", text: `API key: ${res.apiKey}\n\nUse this as the Bearer token for ${params.model_id}.` }] };
-    }
-
-    return { content: [{ type: "text", text: `Failed: ${res.error || "insufficient balance or endpoint not healthy"}` }] };
-  },
-);
-
-// ── Launch ──────────────────────────────────────────────────────────────────
-
-async function main() {
-  if (!capix.configured()) {
-    console.error("Warning: CAPIX_API_KEY not set. Tools will return errors until configured.");
-    console.error("Get your session token from capix.network → sign in → DevTools → Cookies → capix_session");
   }
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("Capix MCP Server running via stdio");
+  if (!httpPort && process.env.CAPIX_MCP_HTTP_PORT) {
+    httpPort = Number(process.env.CAPIX_MCP_HTTP_PORT) || undefined;
+  }
+  if (!httpToken) httpToken = process.env.CAPIX_MCP_HTTP_TOKEN;
+
+  return { command, httpPort, httpToken, help, version: versionFlag, health: healthFlag };
+}
+
+const HELP = `Capix MCP Server v${VERSION}
+
+Usage:
+  capix-mcp [server] [--http <port> [--token <token>]]
+  capix-mcp doctor
+  capix-mcp login [--device]
+  capix-mcp logout
+  capix-mcp --version
+  capix-mcp --health
+
+Commands:
+  (default) / server   Run the MCP server. Defaults to stdio transport.
+                       With --http <port>, also starts a streamable HTTP transport.
+  doctor               Diagnose auth, base URL, and list the tool inventory.
+  login                Authenticate via OAuth PKCE (browser flow).
+  logout               Revoke tokens and clear stored credentials.
+
+Options:
+  --http <port>        Start the streamable HTTP transport on the given port.
+  --token <token>      Bearer service token guarding the HTTP transport.
+  --device             Use the device-code flow instead of the browser flow.
+  --health             Run a quick health check (auth, base URL, tool count) and exit.
+  -h, --help           Show this help.
+  -v, --version        Print version and exit.
+
+Environment:
+  CAPIX_BASE_URL         Capix network URL (default: ${DEFAULT_CAPIX_BASE_URL})
+  CAPIX_API_KEY          Session token / API key (fallback when no OAuth)
+  CAPIX_REFRESH_TOKEN    OAuth refresh token (auto-discovery: IDE/CLI sets this)
+  CAPIX_PROJECT_ID       Default project id for unscoped reads
+  CAPIX_OAUTH_CLIENT_ID  OAuth client id (default: ${DEFAULT_OAUTH_CLIENT_ID})
+`;
+
+async function main(): Promise<void> {
+  const cli = parseArgs(process.argv);
+
+  if (cli.help) {
+    process.stdout.write(HELP);
+    return;
+  }
+  if (cli.version) {
+    process.stdout.write(`@capix/mcp v${VERSION}\n`);
+    return;
+  }
+  if (cli.health) {
+    await runHealth();
+    return;
+  }
+
+  switch (cli.command) {
+    case "doctor":
+      await runDoctor();
+      return;
+    case "login":
+      await runLogin(process.argv.includes("--device"));
+      return;
+    case "logout":
+      await runLogout();
+      return;
+    case "server":
+    default:
+      await runServer(cli);
+      return;
+  }
+}
+
+// ===========================================================================
+// doctor
+// ===========================================================================
+
+async function runDoctor(): Promise<void> {
+  const baseUrl = process.env.CAPIX_BASE_URL ?? DEFAULT_CAPIX_BASE_URL;
+  const apiKey = process.env.CAPIX_API_KEY ?? "";
+  const projectId = process.env.CAPIX_PROJECT_ID;
+
+  const out = (msg: string) => process.stdout.write(msg + "\n");
+
+  out(`Capix MCP Server — doctor`);
+  out(`  version        : ${VERSION}`);
+  out(`  base URL       : ${baseUrl}`);
+  out(`  project id     : ${projectId ?? "(none — set CAPIX_PROJECT_ID)"}`);
+
+  // Auth probe.
+  const broker = await tryCreateBrokerAuthProvider({ baseUrl });
+  let authStatus: string;
+  if (broker && broker.isAuthenticated()) {
+    const acct = broker.getAccount();
+    authStatus = `OAuth (@capix/auth-broker) — account ${acct?.accountId ?? "unknown"}`;
+  } else if (apiKey) {
+    authStatus = `API key (CAPIX_API_KEY) — ${apiKey.slice(0, 6)}…${apiKey.slice(-2)}`;
+  } else if (process.env.CAPIX_REFRESH_TOKEN) {
+    authStatus = "Refresh token (CAPIX_REFRESH_TOKEN — auto-discovery)";
+  } else {
+    authStatus = "NOT AUTHENTICATED — run `capix-mcp login` or set CAPIX_API_KEY / CAPIX_REFRESH_TOKEN";
+  }
+  out(`  auth           : ${authStatus}`);
+
+  // Tool inventory.
+  out(`  tools          : ${TOOL_COUNT}`);
+  const byScope = new Map<string, number>();
+  for (const t of getToolSummary()) {
+    byScope.set(t.scope, (byScope.get(t.scope) ?? 0) + 1);
+  }
+  for (const [scope, count] of byScope) {
+    out(`    ${scope.padEnd(12)} : ${count}`);
+  }
+  const billable = getToolSummary().filter((t) => t.billable).length;
+  out(`  billable       : ${billable}`);
+  out(`  resources      : ${CAPIX_RESOURCES.length}`);
+  out(`  prompts        : ${CAPIX_PROMPTS.length}`);
+  out(`  transports     : stdio, streamable-http`);
+}
+
+// ===========================================================================
+// login / logout
+// ===========================================================================
+
+async function loadBroker() {
+  let mod: typeof import("@capix/auth-broker") | null = null;
+  try {
+    mod = await import("@capix/auth-broker");
+  } catch {
+    return null;
+  }
+  if (!mod) return null;
+  const baseUrl = process.env.CAPIX_BASE_URL ?? DEFAULT_CAPIX_BASE_URL;
+  const clientId = process.env.CAPIX_OAUTH_CLIENT_ID ?? DEFAULT_OAUTH_CLIENT_ID;
+  const scope = DEFAULT_OAUTH_SCOPE;
+  const store = new mod.FileCredentialStore(`${process.env.HOME}/.capix/credentials.json`);
+  const broker = new mod.AuthBroker({ baseUrl, clientId, scope }, store);
+  return { broker, mod };
+}
+
+async function runLogin(useDevice: boolean): Promise<void> {
+  const loaded = await loadBroker();
+  if (!loaded) {
+    process.stderr.write(
+      "Login requires the @capix/auth-broker package, which is not installed.\n" +
+        "Alternatively, set the CAPIX_API_KEY environment variable with a session\n" +
+        "token from capix.network → sign in → DevTools → Cookies → capix_session.\n",
+    );
+    process.exit(1);
+  }
+  const { broker } = loaded;
+
+  try {
+    if (useDevice) {
+      const challenge = await broker.startDeviceCodeLogin();
+      process.stdout.write(
+        `Open ${challenge.url} and enter code: ${challenge.userCode}\n` +
+          `Waiting for authorisation (expires in ${challenge.expiresIn}s)…\n`,
+      );
+      const account = await broker.completeDeviceCodeLogin(challenge);
+      process.stdout.write(`✓ Authenticated as ${account.accountId}.\n`);
+      return;
+    }
+
+    const { authorizeUrl } = await broker.startLogin();
+    process.stdout.write(`Open this URL in a browser to sign in:\n  ${authorizeUrl}\n\n`);
+    tryOpenBrowser(authorizeUrl);
+    process.stdout.write("Waiting for browser callback…\n");
+
+    // Poll the broker's captured authorization code (set by its loopback server).
+    const captured = await pollCapturedCode(broker);
+    if (!captured) {
+      process.stderr.write("Login timed out — no callback received.\n");
+      process.exit(1);
+    }
+    const account = await broker.completeLogin(captured.code, captured.state);
+    process.stdout.write(`✓ Authenticated as ${account.accountId}.\n`);
+  } catch (err) {
+    process.stderr.write(`Login failed: ${(err as Error).message}\n`);
+    process.exit(1);
+  }
+}
+
+interface BrokerWithCapture {
+  capturedCode?: { code: string; state: string } | null;
+}
+
+async function pollCapturedCode(
+  broker: unknown,
+  timeoutMs = 120_000,
+): Promise<{ code: string; state: string } | null> {
+  const deadline = Date.now() + timeoutMs;
+  const b = broker as BrokerWithCapture;
+  while (Date.now() < deadline) {
+    if (b.capturedCode) return b.capturedCode;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return null;
+}
+
+function tryOpenBrowser(url: string): void {
+  const platform = process.platform;
+  const cmd =
+    platform === "darwin"
+      ? "open"
+      : platform === "win32"
+        ? "start"
+        : "xdg-open";
+  try {
+    // best-effort; ignore failures.
+    const { exec } = require("node:child_process");
+    exec(`${cmd} "${url}"`);
+  } catch {
+    /* no-op */
+  }
+}
+
+async function runLogout(): Promise<void> {
+  const loaded = await loadBroker();
+  if (!loaded) {
+    process.stdout.write(
+      "@capix/auth-broker not installed — nothing to revoke. " +
+        "Remove CAPIX_API_KEY from your environment to clear the API-key fallback.\n",
+    );
+    return;
+  }
+  const { broker } = loaded;
+  await broker.logout();
+  process.stdout.write("✓ Logged out. Stored credentials cleared.\n");
+}
+
+// ===========================================================================
+// server
+// ===========================================================================
+
+async function runServer(cli: CliArgs): Promise<void> {
+  const baseUrl = process.env.CAPIX_BASE_URL ?? DEFAULT_CAPIX_BASE_URL;
+  const log = (msg: string) => process.stderr.write(`${msg}\n`);
+
+  // ── Auto-discovery: resolve credentials from env or broker ──────────────
+  // Check order: CAPIX_API_KEY → CAPIX_REFRESH_TOKEN → stored broker creds.
+  const apiKey = process.env.CAPIX_API_KEY;
+  const refreshToken = process.env.CAPIX_REFRESH_TOKEN;
+
+  // If CAPIX_REFRESH_TOKEN is set, prime the broker by storing it so
+  // createClient's resolveAuthProvider can use it.
+  if (!apiKey && refreshToken) {
+    let brokerMod: typeof import("@capix/auth-broker") | null = null;
+    try {
+      brokerMod = await import("@capix/auth-broker");
+    } catch {
+      // broker not installed; fall through to helpful message below
+    }
+    if (brokerMod) {
+      const clientId = process.env.CAPIX_OAUTH_CLIENT_ID ?? DEFAULT_OAUTH_CLIENT_ID;
+      const scope = DEFAULT_OAUTH_SCOPE;
+      const store = new brokerMod.FileCredentialStore(`${process.env.HOME}/.capix/credentials.json`);
+      await store.set(clientId, "refresh-token:active", refreshToken).catch(() => {});
+      const broker = new brokerMod.AuthBroker({ baseUrl, clientId, scope }, store);
+      void broker.getAccessToken().catch(() => {});
+    }
+  }
+
+  if (!apiKey && !refreshToken) {
+    const broker = await tryCreateBrokerAuthProvider({ baseUrl });
+    if (!broker || !broker.isAuthenticated()) {
+      log("Capix MCP Server: no credentials found. Auto-discovery will check again at startup.");
+      log("  Set CAPIX_API_KEY (session token from capix.network),");
+      log("  or CAPIX_REFRESH_TOKEN (the IDE sets this when signed in),");
+      log("  or run `capix-mcp login` to authenticate via OAuth.");
+    }
+  }
+
+  const client = await createClient({
+    baseUrl,
+    apiKey: apiKey,
+    projectId: process.env.CAPIX_PROJECT_ID,
+    log,
+  });
+
+  if (!client.isAuthenticated()) {
+    log("Warning: not authenticated. Run `capix-mcp login` or set CAPIX_API_KEY.");
+    log("Alternatively, set CAPIX_REFRESH_TOKEN (the IDE sets this automatically when signed in).");
+  }
+
+  // HTTP transport (optional, alongside or instead of stdio).
+  if (cli.httpPort) {
+    if (!cli.httpToken) {
+      log(
+        "Error: --http requires --token <service-token> (or CAPIX_MCP_HTTP_TOKEN) to guard the endpoint.",
+      );
+      process.exit(1);
+    }
+    log(`Capix MCP Server (v${VERSION}) — streamable HTTP on :${cli.httpPort}`);
+    await startHttpServer(client, {
+      version: VERSION,
+      httpPort: cli.httpPort,
+      httpServiceToken: cli.httpToken,
+    });
+    return;
+  }
+
+  // Default: stdio transport.
+  log(`Capix MCP Server (v${VERSION}) — stdio transport · ${TOOL_COUNT} tools`);
+  await startStdioServer(client, { version: VERSION });
 }
 
 main().catch((error) => {
-  console.error("Server error:", error);
+  process.stderr.write(`Fatal: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 });
+
+// ===========================================================================
+// health check
+// ===========================================================================
+
+async function runHealth(): Promise<void> {
+  const baseUrl = process.env.CAPIX_BASE_URL ?? DEFAULT_CAPIX_BASE_URL;
+  const out = (msg: string) => process.stdout.write(msg + "\n");
+
+  out(`{`);
+  out(`  "service": "capix-mcp",`);
+  out(`  "version": "${VERSION}",`);
+  out(`  "baseUrl": "${baseUrl}",`);
+
+  // Auth probe — check CAPIX_API_KEY, then CAPIX_REFRESH_TOKEN, then broker.
+  const apiKey = process.env.CAPIX_API_KEY;
+  const refreshToken = process.env.CAPIX_REFRESH_TOKEN;
+  let authMethod = "none";
+  let authenticated = false;
+
+  if (apiKey) {
+    authMethod = "api-key";
+    authenticated = true;
+  } else if (refreshToken) {
+    authMethod = "refresh-token (auto-discovery)";
+    authenticated = true;
+  } else {
+    const broker = await tryCreateBrokerAuthProvider({ baseUrl });
+    if (broker && broker.isAuthenticated()) {
+      authMethod = "oauth-broker";
+      authenticated = true;
+    }
+  }
+
+  out(`  "authenticated": ${authenticated},`);
+  out(`  "authMethod": "${authMethod}",`);
+  out(`  "tools": ${TOOL_COUNT},`);
+
+  const byScope = new Map<string, number>();
+  for (const t of getToolSummary()) {
+    byScope.set(t.scope, (byScope.get(t.scope) ?? 0) + 1);
+  }
+  const scopes = Array.from(byScope.entries())
+    .map(([scope, count]) => `"${scope}": ${count}`)
+    .join(", ");
+  out(`  "toolsByScope": { ${scopes} },`);
+
+  const billable = getToolSummary().filter((t) => t.billable).length;
+  out(`  "billable tools": ${billable},`);
+  out(`  "resources": ${CAPIX_RESOURCES.length},`);
+  out(`  "prompts": ${CAPIX_PROMPTS.length},`);
+
+  const client = await createClient({
+    baseUrl,
+    apiKey: apiKey,
+    projectId: process.env.CAPIX_PROJECT_ID,
+    log: () => {},
+  });
+
+  if (!authenticated) {
+    out(`  "status": "degraded",`);
+    out(`  "advice": "Run 'capix-mcp login' or set CAPIX_API_KEY / CAPIX_REFRESH_TOKEN"`);
+  } else if (client.isAuthenticated()) {
+    out(`  "status": "ok"`);
+  } else {
+    out(`  "status": "degraded",`);
+    out(`  "advice": "Credentials present but client could not authenticate"`);
+  }
+  out(`}`);
+}
+
+// Re-export the assembled-server factory + tool names for programmatic use.
+export { createCapixMcpServer, TOOL_NAMES };
+export const CAPIX_VERSION = VERSION;

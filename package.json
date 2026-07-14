@@ -1,13 +1,22 @@
 {
-  "name": "capix-mcp-server",
-  "version": "1.0.0",
-  "description": "Capix MCP Server — deploy and manage private LLM instances on the Capix GPU network from any AI coding agent.",
+  "name": "@capix/mcp",
+  "version": "2.1.0",
+  "description": "Capix MCP Server — deploy and manage private LLM instances, compute, websites, and verified workloads on the Capix network from any AI coding agent that supports MCP.",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "capix-mcp": "./bin/capix-mcp.js"
+  },
+  "files": ["bin", "dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "provenance": true,
   "scripts": {
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "engines": {
@@ -23,10 +32,23 @@
     "typescript": "^5.7.2"
   },
   "license": "Apache-2.0",
+  "homepage": "https://capix.network",
   "repository": {
     "type": "git",
     "url": "https://github.com/CapIX-Protocol/CapIX-MCP.git"
   },
-  "homepage": "https://capix.network",
-  "keywords": ["mcp", "capix", "llm", "gpu", "ai", "inference", "model-context-protocol"]
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/CapIX-Protocol"
+  },
+  "keywords": [
+    "capix",
+    "mcp",
+    "model-context-protocol",
+    "cloud",
+    "gpu",
+    "ai",
+    "inference",
+    "deploy"
+  ]
 }
