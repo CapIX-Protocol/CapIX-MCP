@@ -1,13 +1,19 @@
 {
-  "name": "@capix/mcp",
+  "name": "capix-mcp",
   "version": "2.1.0",
-  "description": "Capix MCP Server — deploy and manage private LLM instances, compute, websites, and verified workloads on the Capix network from any AI coding agent that supports MCP.",
+  "description": "Capix MCP Server \u2014 deploy and manage private LLM instances, compute, websites, and verified workloads on the Capix network from any AI coding agent that supports MCP.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "capix-mcp": "./bin/capix-mcp.js"
   },
-  "files": ["bin", "dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
   "publishConfig": {
     "access": "public"
   },
