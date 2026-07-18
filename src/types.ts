@@ -132,7 +132,8 @@ export type ToolScope =
   | "networking"
   | "testing"
   | "verification"
-  | "website";
+  | "website"
+  | "infra-context";
 
 /** Per-call context threaded into every tool handler. */
 export interface ToolCallContext {
@@ -219,6 +220,7 @@ export const CAPIX_SCOPE_LABELS: Record<ToolScope, string> = {
   testing: "Testing",
   verification: "Verification (read-only)",
   website: "Website",
+  "infra-context": "Infra context (read-only)",
 };
 
 /** Convenience flags for declaring billable vs read-only tools. */

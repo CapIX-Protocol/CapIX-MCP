@@ -1,7 +1,7 @@
 /**
  * Capix MCP Server — the McpServer assembly + transport wiring.
  *
- * `createCapixMcpServer(client)` builds an {@link McpServer} with all 59
+ * `createCapixMcpServer(client)` builds an {@link McpServer} with all 64
  * tools, the capix:// resources, and the guided prompts registered. Each tool
  * registration wires:
  *   - inputSchema  → the tool's Zod raw shape (validated by the SDK)
@@ -63,7 +63,7 @@ function annotationsFor(tool: ToolDef): {
 }
 
 /**
- * Build a fully-wired McpServer. All 59 tools, resources, and prompts are
+ * Build a fully-wired McpServer. All 64 tools, resources, and prompts are
  * registered before returning; the caller just attaches a transport.
  */
 export function createCapixMcpServer(

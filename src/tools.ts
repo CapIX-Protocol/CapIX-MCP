@@ -1,5 +1,5 @@
 /**
- * Capix MCP Server — all 59 tool definitions.
+ * Capix MCP Server — all 64 tool definitions.
  *
  * Each tool is declared with:
  *   - inputShape  : a Zod raw shape (validated by the McpServer before dispatch)
@@ -13,21 +13,21 @@
  *
  * Tools are grouped by scope (mirrors services/capix-mcp/tools/*.ts):
  *   discovery (9) · planning (6) · lifecycle (7) · networking (8) ·
- *   testing (6) · verification (6) · website (17)
+ *   testing (6) · verification (6) · website (17) · infra-context (5)
  */
 
 import { z } from "zod";
 import type {
   CapixClientLike,
   ToolDef,
-  ToolDeps,
-  ToolScope,
 } from "./types.js";
 import {
   APPROVAL_ONLY,
   BILLABLE,
   READ_ONLY,
 } from "./types.js";
+import { defineTool } from "./tools/define-tool.js";
+import { infraContextTools } from "./tools/infra-context.js";
 
 // ===========================================================================
 // Reusable Zod fragments
@@ -93,40 +93,9 @@ const siteResultShape = {
 } satisfies Record<string, z.ZodTypeAny>;
 
 // ===========================================================================
-// defineTool — type-safe tool declaration helper
+// defineTool — imported from tools/define-tool.ts (shared with sibling tool
+// modules such as tools/infra-context.ts; see that file for the doc comment).
 // ===========================================================================
-
-/**
- * Declare a Capix tool with a Zod raw input shape. The handler receives
- * Zod-validated arguments (typed via inference) plus the Capix API client and
- * call context; it returns the upstream JSON object as structured content.
- */
-function defineTool<S extends z.ZodRawShape>(opts: {
-  name: string;
-  description: string;
-  scope: ToolScope;
-  billable: boolean;
-  requiresApproval: boolean;
-  inputShape: S;
-  outputShape?: Record<string, z.ZodTypeAny>;
-  handler: (
-    args: { [K in keyof S]: z.output<S[K]> },
-    deps: ToolDeps,
-  ) => Promise<Record<string, unknown>>;
-}): ToolDef {
-  return {
-    name: opts.name,
-    description: opts.description,
-    scope: opts.scope,
-    billable: opts.billable,
-    requiresApproval: opts.requiresApproval,
-    inputShape: opts.inputShape,
-    outputShape: opts.outputShape,
-    // Sound cast: the McpServer validates args against inputShape before
-    // invoking the handler, so the inferred arg shape is guaranteed at runtime.
-    handler: opts.handler as ToolDef["handler"],
-  };
-}
 
 /** Convenience: pull a string argument, throwing a typed error if missing. */
 function asStr(value: unknown, field: string): string {
@@ -1362,6 +1331,7 @@ export const TOOLS: ToolDef[] = [
   ...testingTools,
   ...verificationTools,
   ...websiteTools,
+  ...infraContextTools,
 ];
 
 export const TOOL_NAMES: string[] = TOOLS.map((t) => t.name);
@@ -1371,4 +1341,4 @@ export const TOOL_COUNT = TOOLS.length;
 /** Map of tool name → definition, used by the server for O(1) lookup. */
 export const TOOL_MAP: Map<string, ToolDef> = new Map(TOOLS.map((t) => [t.name, t]));
 
-export { discoveryTools, planningTools, lifecycleTools, networkingTools, testingTools, verificationTools, websiteTools };
+export { discoveryTools, planningTools, lifecycleTools, networkingTools, testingTools, verificationTools, websiteTools, infraContextTools };
