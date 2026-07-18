@@ -226,9 +226,27 @@ async function loadBroker() {
   const baseUrl = process.env.CAPIX_BASE_URL ?? DEFAULT_CAPIX_BASE_URL;
   const clientId = process.env.CAPIX_OAUTH_CLIENT_ID ?? DEFAULT_OAUTH_CLIENT_ID;
   const scope = DEFAULT_OAUTH_SCOPE;
-  const store = new mod.FileCredentialStore(`${process.env.HOME}/.capix/credentials.json`);
+  const store = createBrokerStore(mod, clientId);
   const broker = new mod.AuthBroker({ baseUrl, clientId, scope }, store);
   return { broker, mod };
+}
+
+/**
+ * Credential store matching the API client's selection (client.ts): the shared
+ * package's platform-aware default (OS keychain → 0600 file), falling back to
+ * the explicit file store on broker builds that predate
+ * createDefaultCredentialStore. Login, logout, env priming and the API client
+ * MUST all use the same store or credentials appear to vanish between
+ * processes.
+ */
+function createBrokerStore(
+  mod: typeof import("@capix/auth-broker"),
+  clientId: string,
+): import("@capix/auth-broker").CredentialStore {
+  if (typeof mod.createDefaultCredentialStore === "function") {
+    return mod.createDefaultCredentialStore(clientId);
+  }
+  return new mod.FileCredentialStore(`${process.env.HOME}/.capix/credentials.json`);
 }
 
 async function runLogin(useDevice: boolean): Promise<void> {
@@ -347,7 +365,7 @@ async function runServer(cli: CliArgs): Promise<void> {
     if (brokerMod) {
       const clientId = process.env.CAPIX_OAUTH_CLIENT_ID ?? DEFAULT_OAUTH_CLIENT_ID;
       const scope = DEFAULT_OAUTH_SCOPE;
-      const store = new brokerMod.FileCredentialStore(`${process.env.HOME}/.capix/credentials.json`);
+      const store = createBrokerStore(brokerMod, clientId);
       await store.set(clientId, "refresh-token:active", refreshToken).catch(() => {});
       const broker = new brokerMod.AuthBroker({ baseUrl, clientId, scope }, store);
       void broker.getAccessToken().catch(() => {});

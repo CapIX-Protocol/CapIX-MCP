@@ -80,10 +80,13 @@ export class BrokerAuthProvider implements AuthProvider {
   }
 
   async getToken(): Promise<string | null> {
-    if (this.broker.getState() !== "authenticated") return null;
     if (this.cached && this.cached.expiresAt > Date.now() + 60_000) {
       return this.cached.token;
     }
+    // Do NOT gate on the synchronous getState() here: the shared broker
+    // awaits its credential-store load internally and single-flights the
+    // refresh grant, so a cold-started process can mint a token even before
+    // getState() flips to "authenticated".
     try {
       const token = await this.broker.getAccessToken();
       const account = this.broker.getAccount();
@@ -95,7 +98,7 @@ export class BrokerAuthProvider implements AuthProvider {
   }
 
   isAuthenticated(): boolean {
-    return this.broker.getState() === "authenticated";
+    return this.cached !== null || this.broker.getState() === "authenticated";
   }
 
   getAccount(): AccountInfo | null {
@@ -129,12 +132,19 @@ export async function tryCreateBrokerAuthProvider(opts?: {
   }
   if (!mod) return null;
 
-  // Prefer the OS keyring (KeytarCredentialStore); fall back to a 0600 file.
+  // Prefer the shared package's platform-aware store selection (OS keychain
+  // via keytar/security/cmdkey/secret-tool, 0600 file fallback). The explicit
+  // Keytar→File chain below supports older broker builds that predate
+  // createDefaultCredentialStore.
   let store: import("@capix/auth-broker").CredentialStore;
-  try {
-    store = new mod.KeytarCredentialStore(clientId);
-  } catch {
-    store = new mod.FileCredentialStore(join(homedir(), ".capix", "credentials.json"));
+  if (typeof mod.createDefaultCredentialStore === "function") {
+    store = mod.createDefaultCredentialStore(clientId);
+  } else {
+    try {
+      store = new mod.KeytarCredentialStore(clientId);
+    } catch {
+      store = new mod.FileCredentialStore(join(homedir(), ".capix", "credentials.json"));
+    }
   }
 
   const config: AuthConfig = { baseUrl, clientId, scope };

@@ -56,9 +56,16 @@ declare module "@capix/auth-broker" {
     delete(service: string, account: string): Promise<void>;
   }
 
+  /** Per-call token request overrides (down-scoping only). */
+  export interface AccessTokenOptions {
+    audience?: string;
+    scopes?: string[];
+  }
+
   export class FileCredentialStore implements CredentialStore {
     constructor(filePath?: string);
     get(service: string, account: string): Promise<string | null>;
+    getSync(service: string, account: string): string | null;
     set(service: string, account: string, secret: string): Promise<void>;
     delete(service: string, account: string): Promise<void>;
   }
@@ -70,6 +77,13 @@ declare module "@capix/auth-broker" {
     delete(service: string, account: string): Promise<void>;
   }
 
+  /**
+   * Pick the best available credential store for this machine: keytar (if the
+   * native module is installed) → OS keychain CLI (macOS Keychain / Windows
+   * Credential Manager / Linux Secret Service) → 0600 file fallback.
+   */
+  export function createDefaultCredentialStore(service: string): CredentialStore;
+
   export class AuthBroker {
     /** Loopback-captured authorization code (set by the callback server). */
     capturedCode: { code: string; state: string } | null;
@@ -80,7 +94,7 @@ declare module "@capix/auth-broker" {
     completeLogin(code: string, state: string): Promise<AccountInfo>;
     startDeviceCodeLogin(): Promise<DeviceCodeChallenge>;
     completeDeviceCodeLogin(challenge: DeviceCodeChallenge): Promise<AccountInfo>;
-    getAccessToken(): Promise<string>;
+    getAccessToken(opts?: AccessTokenOptions): Promise<string>;
     getState(): AuthState;
     getAccount(): AccountInfo | null;
     logout(): Promise<void>;
