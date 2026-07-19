@@ -21,6 +21,7 @@
 
 import { z } from "zod";
 import { defineTool } from "./define-tool.js";
+import { defineGeneratedTool } from "./generate.js";
 import { READ_ONLY } from "../types.js";
 import type { ToolDef } from "../types.js";
 
@@ -111,13 +112,15 @@ export const infraContextTools: ToolDef[] = [
     handler: async (_args, { client }) =>
       client.get<Record<string, unknown>>("/api/v1/earnings"),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_model_list",
     description:
       "List deployable models from the Capix catalog (id, label, category, parameter count, min VRAM). Read-only.",
     scope: "infra-context",
     ...READ_ONLY,
-    inputShape: {
+    method: "GET",
+    path: "/api/v1/models",
+    input: {
       category: z.string().optional().describe("Optional category filter (e.g. chat, code, embedding)."),
       limit: z.number().int().min(1).max(200).default(100).describe("Max models to return."),
     },
@@ -125,11 +128,6 @@ export const infraContextTools: ToolDef[] = [
       ...listResultShape,
       catalogVersion: z.string().optional(),
     },
-    handler: async (args, { client }) =>
-      client.get<Record<string, unknown>>("/api/v1/models", {
-        category: args.category,
-        limit: args.limit,
-      }),
   }),
   defineTool({
     name: "capix_deployment_list",

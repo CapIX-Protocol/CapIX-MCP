@@ -1,0 +1,21 @@
+Capix MCP Server
+================
+
+This product includes software developed at the Capix Protocol project
+(https://capix.network), licensed under the Apache License 2.0 (see LICENSE).
+
+Third-party attributions
+------------------------
+
+OpenShip
+  https://github.com/oblien/openship
+  Copyright the OpenShip contributors.
+  Licensed under the Apache License 2.0.
+
+  The MCP tool-generation pattern adapted in src/tools/generate.ts —
+  declaring method + path + input schema once and deriving both the MCP tool
+  registration and the HTTP dispatch from that single declaration — follows
+  the route-registry approach of OpenShip's apps/api/src/modules/mcp/ module
+  (mcp-tools.ts, mcp-dispatch.ts, mcp-server.ts). Only the design pattern was
+  adapted; the implementation in this repository is original and specific to
+  the Capix control plane. No OpenShip source code is vendored.
