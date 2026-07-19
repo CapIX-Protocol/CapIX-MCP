@@ -43,7 +43,7 @@ import { TOOL_COUNT, TOOL_NAMES } from "./tools.js";
 import { CAPIX_RESOURCES } from "./resources.js";
 import { CAPIX_PROMPTS } from "./prompts.js";
 
-const VERSION = "2.1.0";
+const VERSION = "2.1.1";
 
 // ===========================================================================
 // Argument parsing
