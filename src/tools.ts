@@ -11,6 +11,11 @@
  * structured content. The CapixApiError (problem+json) thrown by the client is
  * caught by the server wrapper and surfaced as an MCP error result.
  *
+ * CRUD-shaped tools are declared with `defineGeneratedTool` (tools/generate.ts)
+ * — a declarative spec (method, path, input) from which the registration AND
+ * the HTTP call are generated — instead of a hand-written handler. Everything
+ * else uses `defineTool` (tools/define-tool.ts) with an explicit handler.
+ *
  * Tools are grouped by scope (mirrors services/capix-mcp/tools/*.ts):
  *   discovery (9) · planning (6) · lifecycle (7) · networking (8) ·
  *   testing (6) · verification (6) · website (17) · infra-context (5)
@@ -27,6 +32,7 @@ import {
   READ_ONLY,
 } from "./types.js";
 import { defineTool } from "./tools/define-tool.js";
+import { defineGeneratedTool } from "./tools/generate.js";
 import { infraContextTools } from "./tools/infra-context.js";
 
 // ===========================================================================
@@ -240,39 +246,33 @@ const discoveryTools: ToolDef[] = [
     handler: async (_args, { client }) =>
       client.get<Record<string, unknown>>("/api/v1/network/status"),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_deployments",
     description:
       "List deployments for the account/project with phase + allocation state. Read-only.",
     scope: "discovery",
     ...READ_ONLY,
-    inputShape: {
+    method: "GET",
+    path: "/api/v1/deployments",
+    input: {
       limit: z.number().int().min(1).max(200).default(50).describe("Max deployments to return."),
       phase: z.string().optional().describe("Optional DeploymentPhase filter."),
     },
     outputShape: listResultShape,
-    handler: async (args, { client }) =>
-      client.get<Record<string, unknown>>("/api/v1/deployments", {
-        limit: args.limit,
-        phase: args.phase,
-      }),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_receipts",
     description:
       "List settled work receipts (cost records) for the account. Read-only.",
     scope: "discovery",
     ...READ_ONLY,
-    inputShape: {
+    method: "GET",
+    path: "/api/v1/receipts",
+    input: {
       limit: z.number().int().min(1).max(200).default(50),
       since: iso8601.optional().describe("Optional lower bound (inclusive)."),
     },
     outputShape: listResultShape,
-    handler: async (args, { client }) =>
-      client.get<Record<string, unknown>>("/api/v1/receipts", {
-        limit: args.limit,
-        since: args.since,
-      }),
   }),
   defineTool({
     name: "capix_attestations",
@@ -351,16 +351,16 @@ const planningTools: ToolDef[] = [
     handler: async (args, { client }) =>
       client.post<Record<string, unknown>>("/api/v1/planning/compute/plan", args),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_compute_quote",
     description:
       "Get a canonical quote for a compute deployment plan (locks asset/scale/FX/fee/expiry). Read-only.",
     scope: "planning",
     ...READ_ONLY,
-    inputShape: computeSpecShape,
+    method: "POST",
+    path: "/api/v1/planning/compute/quote",
+    input: computeSpecShape,
     outputShape: quoteResultShape,
-    handler: async (args, { client }) =>
-      client.post<Record<string, unknown>>("/api/v1/planning/compute/quote", args),
   }),
   defineTool({
     name: "capix_model_plan",
@@ -381,15 +381,15 @@ const planningTools: ToolDef[] = [
     handler: async (args, { client }) =>
       client.post<Record<string, unknown>>("/api/v1/planning/model/plan", args),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_model_quote",
     description: "Get a canonical quote for a model endpoint plan. Read-only.",
     scope: "planning",
     ...READ_ONLY,
-    inputShape: modelSpecShape,
+    method: "POST",
+    path: "/api/v1/planning/model/quote",
+    input: modelSpecShape,
     outputShape: quoteResultShape,
-    handler: async (args, { client }) =>
-      client.post<Record<string, unknown>>("/api/v1/planning/model/quote", args),
   }),
   defineTool({
     name: "capix_stack_validate",
@@ -465,22 +465,18 @@ const lifecycleTools: ToolDef[] = [
         `/api/v1/lifecycle/deployments/${encodeURIComponent(asStr(args.deploymentId, "deploymentId"))}/start`,
       ),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_stop",
     description:
       "Stop a running deployment (halts metering, keeps allocation). Billable (minimal); requires approval.",
     scope: "lifecycle",
     ...BILLABLE,
-    inputShape: {
+    method: "POST",
+    path: "/api/v1/lifecycle/deployments/:deploymentId/stop",
+    input: {
       deploymentId: deploymentIdShape,
     },
     outputShape: deploymentResultShape,
-    handler: async (args, { client, ctx }) =>
-      callBillable(
-        client,
-        ctx.approvalToken,
-        `/api/v1/lifecycle/deployments/${encodeURIComponent(asStr(args.deploymentId, "deploymentId"))}/stop`,
-      ),
   }),
   defineTool({
     name: "capix_restart",
@@ -543,13 +539,15 @@ const lifecycleTools: ToolDef[] = [
         { durationHours: args.durationHours, quoteId: args.quoteId },
       ),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_cancel",
     description:
       "Cancel an in-flight operation (best-effort; may trigger compensation). Read-only intent; requires approval to mutate.",
     scope: "lifecycle",
     ...APPROVAL_ONLY,
-    inputShape: {
+    method: "POST",
+    path: "/api/v1/operations/:operationId/cancel",
+    input: {
       operationId: operationIdShape,
       reason: z.string().optional(),
     },
@@ -558,13 +556,6 @@ const lifecycleTools: ToolDef[] = [
       status: z.string().optional(),
       acceptedAt: iso8601.optional(),
     },
-    handler: async (args, { client, ctx }) =>
-      callBillable(
-        client,
-        ctx.approvalToken,
-        `/api/v1/operations/${encodeURIComponent(asStr(args.operationId, "operationId"))}/cancel`,
-        args.reason ? { reason: args.reason } : undefined,
-      ),
   }),
 ];
 
@@ -960,13 +951,15 @@ const verificationTools: ToolDef[] = [
         `/api/v1/verification/workloads/${encodeURIComponent(asStr(args.workloadId, "workloadId"))}/measurement`,
       ),
   }),
-  defineTool({
+  defineGeneratedTool({
     name: "capix_inspect_receipt",
     description:
       "Inspect a settled work receipt (cost breakdown, settlement, approval status). Read-only.",
     scope: "verification",
     ...READ_ONLY,
-    inputShape: {
+    method: "GET",
+    path: "/api/v1/verification/receipts/:receiptId",
+    input: {
       receiptId: z.string(),
     },
     outputShape: {
@@ -976,10 +969,6 @@ const verificationTools: ToolDef[] = [
       settlement: z.record(z.unknown()).optional(),
       postedAt: iso8601.optional(),
     },
-    handler: async (args, { client }) =>
-      client.get<Record<string, unknown>>(
-        `/api/v1/verification/receipts/${encodeURIComponent(asStr(args.receiptId, "receiptId"))}`,
-      ),
   }),
 ];
 
