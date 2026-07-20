@@ -1,5 +1,5 @@
 /**
- * Capix MCP Server — all 64 tool definitions.
+ * Capix MCP Server — all 67 tool definitions.
  *
  * Each tool is declared with:
  *   - inputShape  : a Zod raw shape (validated by the McpServer before dispatch)
@@ -17,8 +17,10 @@
  * else uses `defineTool` (tools/define-tool.ts) with an explicit handler.
  *
  * Tools are grouped by scope (mirrors services/capix-mcp/tools/*.ts):
- *   discovery (9) · planning (6) · lifecycle (7) · networking (8) ·
+ *   discovery (10) · planning (6) · lifecycle (9) · networking (8) ·
  *   testing (6) · verification (6) · website (17) · infra-context (5)
+ * (The meme/image tools live in tools/memes.ts; the meme catalog joins
+ * discovery, the two billable generators join lifecycle.)
  */
 
 import { z } from "zod";
@@ -34,6 +36,7 @@ import {
 import { defineTool } from "./tools/define-tool.js";
 import { defineGeneratedTool } from "./tools/generate.js";
 import { infraContextTools } from "./tools/infra-context.js";
+import { memeImageTools } from "./tools/memes.js";
 
 // ===========================================================================
 // Reusable Zod fragments
@@ -1321,6 +1324,7 @@ export const TOOLS: ToolDef[] = [
   ...verificationTools,
   ...websiteTools,
   ...infraContextTools,
+  ...memeImageTools,
 ];
 
 export const TOOL_NAMES: string[] = TOOLS.map((t) => t.name);
@@ -1330,4 +1334,4 @@ export const TOOL_COUNT = TOOLS.length;
 /** Map of tool name → definition, used by the server for O(1) lookup. */
 export const TOOL_MAP: Map<string, ToolDef> = new Map(TOOLS.map((t) => [t.name, t]));
 
-export { discoveryTools, planningTools, lifecycleTools, networkingTools, testingTools, verificationTools, websiteTools, infraContextTools };
+export { discoveryTools, planningTools, lifecycleTools, networkingTools, testingTools, verificationTools, websiteTools, infraContextTools, memeImageTools };

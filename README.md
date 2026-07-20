@@ -15,7 +15,7 @@ That's it. Your AI agent can now deploy models, manage compute, and build websit
 
 ## How it works
 
-Capix MCP exposes **59 tools** grouped into seven scopes. The server speaks stdio (for local agent integration) and streamable HTTP (for remote/hosted use). Authentication is handled via OAuth PKCE (through the `@capix/auth-broker`) or a simple `CAPIX_API_KEY` environment variable.
+Capix MCP exposes **67 tools** grouped into eight scopes. The server speaks stdio (for local agent integration) and streamable HTTP (for remote/hosted use). Authentication is handled via OAuth PKCE (through the `@capix/auth-broker`) or a simple `CAPIX_API_KEY` environment variable.
 
 Read-only tools auto-run after authentication. Billable tools require a bound `approvalToken` — the agent obtains this after quoting the cost upstream, so no spend happens without explicit user consent.
 
@@ -130,11 +130,11 @@ Or with streamable HTTP:
 capix-mcp server --http 8080 --token <service-token>
 ```
 
-## Tools (59)
+## Tools (67)
 
 All tools are prefixed with `capix_`. Read-only tools auto-run after authentication. Billable tools require a bound `approvalToken`.
 
-### Discovery (9) — read-only
+### Discovery (10) — read-only
 
 | Tool | Description |
 |---|---|
@@ -147,6 +147,7 @@ All tools are prefixed with `capix_`. Read-only tools auto-run after authenticat
 | `capix_deployments` | List deployments with phase + allocation state |
 | `capix_receipts` | List work receipts for the account |
 | `capix_attestations` | List attestation records for the account |
+| `capix_meme_templates` | List the meme template + vibe catalog and AI-canvas availability (free) |
 
 ### Planning (6) — read-only
 
@@ -159,7 +160,7 @@ All tools are prefixed with `capix_`. Read-only tools auto-run after authenticat
 | `capix_stack_validate` | Validate a multi-component stack definition |
 | `capix_stack_plan` | Plan a multi-component stack deployment |
 
-### Lifecycle (7) — billable, requires approval
+### Lifecycle (9) — billable, requires approval
 
 | Tool | Description |
 |---|---|
@@ -170,6 +171,8 @@ All tools are prefixed with `capix_`. Read-only tools auto-run after authenticat
 | `capix_delete` | Delete a deployment permanently |
 | `capix_extend` | Extend a deployment's lifetime |
 | `capix_cancel` | Cancel an in-progress operation |
+| `capix_meme` | Generate a meme from a topic (template captions, or AI-canvas image at 2x price when `templateId` is omitted) |
+| `capix_image_gen` | Generate an image from a text prompt (fixed per-image charge) |
 
 ### Networking (8) — billable, requires approval
 
@@ -227,6 +230,16 @@ All tools are prefixed with `capix_`. Read-only tools auto-run after authenticat
 | `capix_website_domain_verify` | Verify DNS ownership for a pending custom domain |
 | `capix_website_domain_remove` | Remove a custom domain from a website |
 | `capix_website_destroy` | Destroy a website and all its resources |
+
+### Infra-context (5) — read-only
+
+| Tool | Description |
+|---|---|
+| `capix_marketplace_browse` | Browse live GPU marketplace offers, cheapest first |
+| `capix_node_status` | Show liveness and health for every node across the account's deployments |
+| `capix_earnings_check` | Check the earnings dashboard (wallet, spend, dev-token earnings) |
+| `capix_model_list` | List deployable models from the Capix catalog |
+| `capix_deployment_list` | List the deployment inventory with live status, health and hourly cost |
 
 ## Configuration
 

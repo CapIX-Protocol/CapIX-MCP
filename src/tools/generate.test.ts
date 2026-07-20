@@ -93,8 +93,8 @@ describe("generated tool registration", () => {
     }
   });
 
-  it("keeps the total tool count at 64 with no name collisions", () => {
-    assert.equal(TOOLS.length, 64);
+  it("keeps the total tool count at 67 with no name collisions", () => {
+    assert.equal(TOOLS.length, 67);
     assert.equal(new Set(TOOL_NAMES).size, TOOL_NAMES.length);
   });
 
