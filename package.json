@@ -1,6 +1,6 @@
 {
   "name": "capix-mcp",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Capix MCP Server \u2014 deploy and manage private LLM instances, compute, websites, and verified workloads on the Capix network from any AI coding agent that supports MCP.",
   "type": "module",
   "main": "dist/index.js",
