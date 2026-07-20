@@ -15,7 +15,9 @@ That's it. Your AI agent can now deploy models, manage compute, and build websit
 
 ## How it works
 
-Capix MCP exposes **67 tools** grouped into eight scopes. The server speaks stdio (for local agent integration) and streamable HTTP (for remote/hosted use). Authentication is handled via OAuth PKCE (through the `@capix/auth-broker`) or a simple `CAPIX_API_KEY` environment variable.
+Capix MCP exposes **37 tools** grouped into six scopes. The server speaks stdio (for local agent integration) and streamable HTTP (for remote/hosted use). Authentication is handled via OAuth PKCE (through the `@capix/auth-broker`) or a simple `CAPIX_API_KEY` environment variable.
+
+Every registered tool targets a route family that exists in the Capix control plane; a registry-level gate test (`src/tools/registry.test.ts`) asserts each tool's canonical path against an audited allowlist of real route families, so the tool list below is the true surface — no phantom routes.
 
 Read-only tools auto-run after authentication. Billable tools require a bound `approvalToken` — the agent obtains this after quoting the cost upstream, so no spend happens without explicit user consent.
 
@@ -130,116 +132,80 @@ Or with streamable HTTP:
 capix-mcp server --http 8080 --token <service-token>
 ```
 
-## Tools (67)
+## Tools (37)
 
 All tools are prefixed with `capix_`. Read-only tools auto-run after authentication. Billable tools require a bound `approvalToken`.
 
-### Discovery (10) — read-only
+### Discovery (7) — read-only
 
 | Tool | Description |
 |---|---|
-| `capix_account` | Inspect the authenticated account: wallet, balance, limits, active deployments/agents |
-| `capix_balance` | Get the cash balance (available / held / total) for the account |
-| `capix_projects` | List projects visible to the authenticated account |
-| `capix_compute_catalog` | List the live compute capability catalog (provider / region / tier / price) |
-| `capix_model_catalog` | List the live model endpoint catalog (model id, context length, price) |
-| `capix_network_status` | Inspect network and gateway status (provider health, lanes, emergency flags) |
-| `capix_deployments` | List deployments with phase + allocation state |
-| `capix_receipts` | List work receipts for the account |
-| `capix_attestations` | List attestation records for the account |
+| `capix_account` | Inspect the authenticated account (id, email, wallet, billing status, identities, devices) |
+| `capix_balance` | Get the account ledger balances (SOL / USDC), USD valuation, and recent transactions |
+| `capix_compute_catalog` | List the enabled compute capability catalog (workload types, providers, regions) |
+| `capix_network_status` | Inspect service health and live feature gates |
+| `capix_deployments` | List deployments with phase + allocation state (status/cursor filters) |
+| `capix_receipts` | List work receipts for the account (approval-status/agent filters) |
 | `capix_meme_templates` | List the meme template + vibe catalog and AI-canvas availability (free) |
 
-### Planning (6) — read-only
+### Planning (2) — read-only
 
 | Tool | Description |
 |---|---|
-| `capix_compute_plan` | Plan a compute deployment (matching models to offers) |
-| `capix_compute_quote` | Get a canonical quote for a compute deployment |
-| `capix_model_plan` | Plan a model endpoint deployment |
-| `capix_model_quote` | Get a canonical quote for a model endpoint plan |
-| `capix_stack_validate` | Validate a multi-component stack definition |
-| `capix_stack_plan` | Plan a multi-component stack deployment |
+| `capix_compute_quote` | Get a canonical quote for a compute workload (15-minute TTL) |
+| `capix_model_quote` | Get a canonical quote for a private model endpoint |
 
-### Lifecycle (9) — billable, requires approval
+### Lifecycle (19) — billable, requires approval
 
 | Tool | Description |
 |---|---|
-| `capix_deploy` | Deploy a resource (compute or model endpoint) from a quote |
-| `capix_start` | Start a stopped deployment |
-| `capix_stop` | Stop a running deployment |
-| `capix_restart` | Restart a deployment (stop + start cycle) |
-| `capix_delete` | Delete a deployment permanently |
-| `capix_extend` | Extend a deployment's lifetime |
-| `capix_cancel` | Cancel an in-progress operation |
+| `capix_deploy` | Deploy a workload from a canonical quote |
+| `capix_delete` | Terminate a deployment and settle early termination |
+| `capix_cancel` | Cancel an in-flight operation |
+| `capix_job_submit` | Submit a durable batch job (image + command) |
+| `capix_job_list` | List durable jobs |
+| `capix_job_get` | Get a job by id |
+| `capix_job_logs` | Fetch job log chunks with an `after` cursor |
+| `capix_job_cancel` | Request cooperative cancellation of a job |
+| `capix_job_rerun` | Re-enqueue a terminal job |
+| `capix_training_submit` | Submit a LoRA fine-tuning run |
+| `capix_training_list` | List training runs |
+| `capix_training_get` | Get a training run by id |
+| `capix_training_deploy` | Deploy a finished training run (returns a handoff deep-link) |
+| `capix_agent_deploy` | Deploy a hosted agent runtime (openclaw / hermes / custom) |
+| `capix_agent_list` | List agent deployments |
+| `capix_agent_get` | Get an agent deployment by id |
+| `capix_agent_destroy` | Destroy an agent deployment (refund settles) |
 | `capix_meme` | Generate a meme from a topic (template captions, or AI-canvas image at 2x price when `templateId` is omitted) |
 | `capix_image_gen` | Generate an image from a text prompt (fixed per-image charge) |
 
-### Networking (8) — billable, requires approval
+### Verification (1) — read-only
 
 | Tool | Description |
 |---|---|
-| `capix_create_vpc` | Create a VPC for a project |
-| `capix_create_endpoint` | Create a network endpoint for a deployment |
-| `capix_expose_port` | Expose a port on a deployment |
-| `capix_close_port` | Close a previously exposed port |
-| `capix_inspect_routes` | Inspect the routing table for a deployment |
-| `capix_create_private_connection` | Create a private connection between deployments |
-| `capix_request_dedicated_ip` | Request a dedicated IP for a deployment |
-| `capix_port_forward` | Set up port forwarding for a deployment |
+| `capix_inspect_receipt` | Inspect a signed route receipt (placement, price, cost basis, fees, margin) |
 
-### Testing (6) — mixed
+### Website (6)
 
 | Tool | Description |
 |---|---|
-| `capix_create_test_env` | Create an isolated test environment |
-| `capix_run_health_checks` | Run health checks against a deployment |
-| `capix_run_bounded_command` | Run a bounded shell command inside a deployment |
-| `capix_inspect_logs` | Inspect deployment logs |
-| `capix_inspect_metrics` | Inspect deployment metrics |
-| `capix_destroy_task_resources` | Destroy resources created by a specific task |
+| `capix_website_create` | Create a website from a source ref (clone → detect → build → preview) |
+| `capix_website_list` | List websites with their latest releases |
+| `capix_website_get` | Get a website (status, URLs, releases, 50-line build log tail) |
+| `capix_website_promote` | Promote a built release to production |
+| `capix_website_rollback` | Roll back to a previous built release |
+| `capix_website_destroy` | Destroy a website (soft delete) |
 
-### Verification (6) — read-only
-
-| Tool | Description |
-|---|---|
-| `capix_fetch_attestation` | Fetch an attestation record |
-| `capix_verify_attestation` | Verify an attestation against its expected measurements |
-| `capix_fetch_proof` | Fetch a zkVM proof artifact for a workload |
-| `capix_verify_proof` | Verify a zkVM proof artifact against its public inputs |
-| `capix_inspect_measurement` | Inspect the measurement of a workload |
-| `capix_inspect_receipt` | Inspect a work receipt in detail |
-
-### Website (17)
+### Infra-context (2) — read-only
 
 | Tool | Description |
 |---|---|
-| `capix_website_project_string_check` | Check a website project string for validity |
-| `capix_website_create` | Create a new website project |
-| `capix_website_detect` | Auto-detect website framework from a repository |
-| `capix_website_plan` | Plan a website deployment (build + hosting plan) |
-| `capix_website_quote` | Get a canonical quote for a website deploy |
-| `capix_website_deploy` | Deploy a website (build + host) |
-| `capix_website_preview` | Create a preview deployment |
-| `capix_website_promote` | Promote a preview to production |
-| `capix_website_rollback` | Rollback a website to a previous deployment |
-| `capix_website_get` | Get a website project descriptor |
-| `capix_website_deployments` | List deployments for a website |
-| `capix_website_logs` | Inspect build/runtime logs for a website |
-| `capix_website_metrics` | Inspect request/bandwidth metrics for a website |
-| `capix_website_domain_add` | Add a custom domain to a website |
-| `capix_website_domain_verify` | Verify DNS ownership for a pending custom domain |
-| `capix_website_domain_remove` | Remove a custom domain from a website |
-| `capix_website_destroy` | Destroy a website and all its resources |
+| `capix_marketplace_browse` | Browse live GPU marketplace offers (region, trust tier, capability, price) |
+| `capix_model_list` | List deployable models (public catalog + owned private endpoints) |
 
-### Infra-context (5) — read-only
+### Removed scopes
 
-| Tool | Description |
-|---|---|
-| `capix_marketplace_browse` | Browse live GPU marketplace offers, cheapest first |
-| `capix_node_status` | Show liveness and health for every node across the account's deployments |
-| `capix_earnings_check` | Check the earnings dashboard (wallet, spend, dev-token earnings) |
-| `capix_model_list` | List deployable models from the Capix catalog |
-| `capix_deployment_list` | List the deployment inventory with live status, health and hourly cost |
+The pre-repair registry advertised networking (8), testing (6), and attestation/zkVM (5) tools, plus website sub-tools (domains, metrics, preview, detect, quote) and planning/lifecycle stubs — all targeting route families the control plane never implemented. They were removed in the 2026-07 repair and return when the backend ships (networking roadmap N1–N5; Secured Cloud TEE/zkVM deferred). See `src/route-families.ts` for the audited allowlist of real route families.
 
 ## Configuration
 

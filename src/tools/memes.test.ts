@@ -87,7 +87,7 @@ describe("meme/image tool registration", () => {
       assert.ok(TOOL_NAMES.includes(name), `${name} missing from TOOLS`);
       assert.equal(TOOL_MAP.get(name)?.name, name);
     }
-    assert.equal(TOOLS.length, 67);
+    assert.equal(TOOLS.length, 37);
     assert.equal(new Set(TOOL_NAMES).size, TOOL_NAMES.length);
   });
 

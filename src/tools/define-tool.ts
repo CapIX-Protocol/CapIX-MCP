@@ -20,6 +20,12 @@ export function defineTool<S extends z.ZodRawShape>(opts: {
   scope: ToolDef["scope"];
   billable: boolean;
   requiresApproval: boolean;
+  /**
+   * Canonical `/api/v1/*` path the handler dispatches to. Required so the
+   * registry gate can verify every tool targets a real route family (see
+   * ToolDef.routePath).
+   */
+  routePath: string;
   inputShape: S;
   outputShape?: Record<string, z.ZodTypeAny>;
   handler: (
@@ -33,6 +39,7 @@ export function defineTool<S extends z.ZodRawShape>(opts: {
     scope: opts.scope,
     billable: opts.billable,
     requiresApproval: opts.requiresApproval,
+    routePath: opts.routePath,
     inputShape: opts.inputShape,
     outputShape: opts.outputShape,
     // Sound cast: the McpServer validates args against inputShape before
