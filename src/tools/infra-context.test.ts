@@ -83,7 +83,7 @@ describe("infra-context tool registration", () => {
       assert.ok(TOOL_NAMES.includes(name), `${name} missing from TOOLS`);
       assert.equal(TOOL_MAP.get(name)?.name, name);
     }
-    assert.equal(TOOLS.length, 64);
+    assert.equal(TOOLS.length, 67);
   });
 
   it("has no name collisions with the existing 59 tools", () => {

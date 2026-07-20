@@ -31,6 +31,9 @@
  *   - approval gate      — billable / requiresApproval specs throw the same
  *     `approval_required` (402) error shape as callBillable in tools.ts when
  *     no approvalToken is bound.
+ *   - payload truncation — an optional `transform` post-processes successful
+ *     responses so oversized inline artifacts (SVG, base64) are reduced to a
+ *     pointer (share URL / id) before they reach the agent's context.
  */
 
 import { z } from "zod";
@@ -91,6 +94,15 @@ export interface GeneratedToolSpec<S extends z.ZodRawShape> {
   idempotent?: boolean;
   /** Optional Zod raw shape describing the structured output envelope. */
   outputShape?: Record<string, z.ZodTypeAny>;
+  /**
+   * Optional post-processor for the upstream response, applied before it
+   * becomes structured content. Use it to truncate oversized inline payloads
+   * (SVG markup, base64 rasters) down to a pointer (share URL / id) so the
+   * artifact itself never floods the agent's context; the full payload stays
+   * retrievable via the canonical GET route. Runs only on success — problem
+   * passthrough is unaffected.
+   */
+  transform?: (result: Record<string, unknown>) => Record<string, unknown>;
 }
 
 // ===========================================================================
@@ -175,18 +187,25 @@ export function defineGeneratedTool<S extends z.ZodRawShape>(spec: GeneratedTool
       path = path.replace(`:${param}`, encodeURIComponent(String(value)));
     }
 
+    // Success-path post-processing (e.g. payload truncation); problem
+    // passthrough is untouched because this never wraps a throw.
+    const finish = (result: Record<string, unknown>): Record<string, unknown> =>
+      spec.transform ? spec.transform(result) : result;
+
     if (spec.method === "GET") {
       const params: Record<string, unknown> = {};
       for (const key of queryKeys) params[key] = rawArgs[key];
-      return client.get<Record<string, unknown>>(
-        path,
-        queryKeys.length > 0 ? params : undefined,
+      return finish(
+        await client.get<Record<string, unknown>>(
+          path,
+          queryKeys.length > 0 ? params : undefined,
+        ),
       );
     }
 
     if (spec.method === "DELETE") {
       // client.delete always derives an Idempotency-Key from the path.
-      return client.delete<Record<string, unknown>>(path);
+      return finish(await client.delete<Record<string, unknown>>(path));
     }
 
     // POST: assemble the body from the declared body keys, dropping undefined
@@ -204,12 +223,14 @@ export function defineGeneratedTool<S extends z.ZodRawShape>(spec: GeneratedTool
     if (!idempotent && !needsApproval) {
       // Read-only POST (quote/plan/validate): no idempotency key, no approval
       // header — identical to the hand-written `client.post(path, args)`.
-      return client.post<Record<string, unknown>>(path, body);
+      return finish(await client.post<Record<string, unknown>>(path, body));
     }
-    return client.post<Record<string, unknown>>(path, body, {
-      ...(idempotent ? { idempotent: true } : {}),
-      ...(needsApproval ? { approvalToken: ctx.approvalToken } : {}),
-    });
+    return finish(
+      await client.post<Record<string, unknown>>(path, body, {
+        ...(idempotent ? { idempotent: true } : {}),
+        ...(needsApproval ? { approvalToken: ctx.approvalToken } : {}),
+      }),
+    );
   };
 
   return {
