@@ -124,13 +124,18 @@ export interface CredentialStoreLike {
 // Tool framework types
 // ===========================================================================
 
-/** Logical grouping for a Capix MCP tool (mirrors ToolScope in protocol repo). */
+/**
+ * Logical grouping for a Capix MCP tool (mirrors ToolScope in protocol repo).
+ *
+ * The `networking` and `testing` scopes were removed in the 2026-07 repair:
+ * their entire tool sets targeted route families that do not exist in the
+ * control plane (`/api/v1/networking/*`, `/api/v1/testing/*`). They return
+ * when the backend ships (networking roadmap N1–N5; disposable test envs).
+ */
 export type ToolScope =
   | "discovery"
   | "planning"
   | "lifecycle"
-  | "networking"
-  | "testing"
   | "verification"
   | "website"
   | "infra-context";
@@ -201,6 +206,14 @@ export interface ToolDef {
   billable: boolean;
   /** Whether the caller MUST supply an approvalToken before dispatch. */
   requiresApproval: boolean;
+  /**
+   * The canonical `/api/v1/*` control-plane path this tool dispatches to
+   * (may contain `:param` segments). Declared on every tool so the registry
+   * gate (tools/registry.test.ts) can assert that no registered tool targets
+   * a route family outside REAL_ROUTE_FAMILIES — the anti-regression guard
+   * against phantom tools pointing at routes the backend never implemented.
+   */
+  routePath: string;
   /** Zod raw shape describing the tool input arguments. */
   inputShape: Record<string, import("zod").ZodTypeAny>;
   /**
@@ -216,8 +229,6 @@ export const CAPIX_SCOPE_LABELS: Record<ToolScope, string> = {
   discovery: "Discovery (read-only)",
   planning: "Planning (read-only)",
   lifecycle: "Lifecycle (billable)",
-  networking: "Networking (billable)",
-  testing: "Testing",
   verification: "Verification (read-only)",
   website: "Website",
   "infra-context": "Infra context (read-only)",

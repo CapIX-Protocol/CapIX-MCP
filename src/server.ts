@@ -1,9 +1,9 @@
 /**
  * Capix MCP Server — the McpServer assembly + transport wiring.
  *
- * `createCapixMcpServer(client)` builds an {@link McpServer} with all 67
- * tools, the capix:// resources, and the guided prompts registered. Each tool
- * registration wires:
+ * `createCapixMcpServer(client)` builds an {@link McpServer} with every tool
+ * in the registry (TOOL_COUNT), the capix:// resources, and the guided
+ * prompts registered. Each tool registration wires:
  *   - inputSchema  → the tool's Zod raw shape (validated by the SDK)
  *   - outputSchema → the tool's Zod raw output shape
  *   - annotations   → readOnlyHint / destructiveHint / idempotentHint derived
@@ -50,10 +50,10 @@ function annotationsFor(tool: ToolDef): {
   openWorldHint: boolean;
 } {
   const isDestructive =
-    (tool.scope === "lifecycle" && (tool.name === "capix_delete" || tool.name === "capix_cancel")) ||
-    tool.name === "capix_destroy_task_resources" ||
+    tool.name === "capix_delete" ||
+    tool.name === "capix_cancel" ||
     tool.name === "capix_website_destroy" ||
-    tool.name === "capix_website_domain_remove";
+    tool.name === "capix_agent_destroy";
   return {
     readOnlyHint: !tool.billable && !tool.requiresApproval,
     destructiveHint: isDestructive,
@@ -63,8 +63,8 @@ function annotationsFor(tool: ToolDef): {
 }
 
 /**
- * Build a fully-wired McpServer. All 67 tools, resources, and prompts are
- * registered before returning; the caller just attaches a transport.
+ * Build a fully-wired McpServer. All registered tools, resources, and prompts
+ * are wired before returning; the caller just attaches a transport.
  */
 export function createCapixMcpServer(
   client: CapixClient,

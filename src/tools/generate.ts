@@ -239,6 +239,7 @@ export function defineGeneratedTool<S extends z.ZodRawShape>(spec: GeneratedTool
     scope: spec.scope,
     billable: spec.billable,
     requiresApproval: spec.requiresApproval,
+    routePath: spec.path,
     inputShape: spec.input,
     outputShape: spec.outputShape,
     // Sound cast: same guarantee as defineTool — the McpServer validates args

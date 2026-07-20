@@ -24,7 +24,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "test": "tsx --test src/tools/infra-context.test.ts src/tools/generate.test.ts src/tools/memes.test.ts"
+    "test": "tsx --test src/tools/registry.test.ts src/tools/generate.test.ts src/tools/factory.test.ts src/tools/website.test.ts src/tools/infra-context.test.ts src/tools/memes.test.ts"
   },
   "engines": {
     "node": ">=18"
